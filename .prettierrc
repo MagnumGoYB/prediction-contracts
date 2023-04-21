@@ -9,5 +9,6 @@
   ],
   "plugins": [
     "prettier-plugin-solidity"
-  ]
+  ],
+  "printWidth": 120
 }

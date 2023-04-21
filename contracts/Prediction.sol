@@ -30,7 +30,14 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
 
   uint256 public constant MAX_TREASURY_FEE = 1000; // 10%
 
+  mapping(uint256 => mapping(address => BetInfo)) public ledger;
   mapping(uint256 => Round) public rounds;
+  mapping(address => uint256[]) public userRounds;
+
+  enum Position {
+    Bull,
+    Bear
+  }
 
   struct Round {
     uint256 epoch;
@@ -49,6 +56,14 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
     bool oracleCalled;
   }
 
+  struct BetInfo {
+    Position position;
+    uint256 amount;
+    bool claimed; // default false
+  }
+
+  event BetBear(address indexed sender, uint256 indexed epoch, uint256 amount);
+  event BetBull(address indexed sender, uint256 indexed epoch, uint256 amount);
   event Pause(uint256 indexed epoch);
   event StartRound(uint256 indexed epoch);
   event EndRound(uint256 indexed epoch, uint256 indexed roundId, int256 price);
@@ -110,6 +125,72 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
     minBetAmount = _minBetAmount;
     oracleUpdateAllowance = _oracleUpdateAllowance;
     treasuryFee = _treasuryFee;
+  }
+
+  /**
+   * @notice Bet bear position
+   * @param epoch: epoch
+   */
+  function betBear(
+    uint256 epoch
+  ) external payable whenNotPaused nonReentrant notContract {
+    require(epoch == currentEpoch, "Bet is too early/late");
+    require(_bettable(epoch), "Round not bettable");
+    require(
+      msg.value >= minBetAmount,
+      "Bet amount must be greater than minBetAmount"
+    );
+    require(
+      ledger[epoch][msg.sender].amount == 0,
+      "Can only bet once per round"
+    );
+
+    // Update round data
+    uint256 amount = msg.value;
+    Round storage round = rounds[epoch];
+    round.totalAmount = round.totalAmount + amount;
+    round.bearAmount = round.bearAmount + amount;
+
+    // Update user data
+    BetInfo storage betInfo = ledger[epoch][msg.sender];
+    betInfo.position = Position.Bear;
+    betInfo.amount = amount;
+    userRounds[msg.sender].push(epoch);
+
+    emit BetBear(msg.sender, epoch, amount);
+  }
+
+  /**
+   * @notice Bet bull position
+   * @param epoch: epoch
+   */
+  function betBull(
+    uint256 epoch
+  ) external payable whenNotPaused nonReentrant notContract {
+    require(epoch == currentEpoch, "Bet is too early/late");
+    require(_bettable(epoch), "Round not bettable");
+    require(
+      msg.value >= minBetAmount,
+      "Bet amount must be greater than minBetAmount"
+    );
+    require(
+      ledger[epoch][msg.sender].amount == 0,
+      "Can only bet once per round"
+    );
+
+    // Update round data
+    uint256 amount = msg.value;
+    Round storage round = rounds[epoch];
+    round.totalAmount = round.totalAmount + amount;
+    round.bullAmount = round.bullAmount + amount;
+
+    // Update user data
+    BetInfo storage betInfo = ledger[epoch][msg.sender];
+    betInfo.position = Position.Bull;
+    betInfo.amount = amount;
+    userRounds[msg.sender].push(epoch);
+
+    emit BetBull(msg.sender, epoch, amount);
   }
 
   /**
@@ -342,6 +423,19 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
       "Can only start new round after round n-2 closeTimestamp"
     );
     _startRound(epoch);
+  }
+
+  /**
+   * @notice Determine if a round is valid for receiving bets
+   * Round must have started and locked
+   * Current timestamp must be within startTimestamp and closeTimestamp
+   */
+  function _bettable(uint256 epoch) internal view returns (bool) {
+    return
+      rounds[epoch].startTimestamp != 0 &&
+      rounds[epoch].lockTimestamp != 0 &&
+      block.timestamp > rounds[epoch].startTimestamp &&
+      block.timestamp < rounds[epoch].lockTimestamp;
   }
 
   /**
