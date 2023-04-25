@@ -1,7 +1,7 @@
 import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
 import { ethers, web3 } from "hardhat";
-import { BigNumber } from "ethers";
+import { BigNumber, utils } from "ethers";
 
 const ether = (val: string) => web3.utils.toWei(val, "ether");
 
@@ -20,6 +20,13 @@ const INITIAL_TREASURY_RATE = 0.1; // 10%
 const Position = {
   Bull: 0,
   Bear: 1,
+};
+
+const expectBigNumberArray = (arr1: any[], arr2: any | any[]) => {
+  expect(arr1.length).to.equal(arr2.length);
+  arr1.forEach((n1, index) => {
+    expect(n1.toString()).to.equal(BigNumber.from(arr2[index]).toString());
+  });
 };
 
 describe("Prediction", function () {
@@ -262,7 +269,7 @@ describe("Prediction", function () {
   });
 
   it("7.Should record data and user bets", async () => {
-    const { prediction, bullUser1, bullUser2, bearUser1, bearUser2 } = await loadFixture(deployPredictionFixture);
+    const { prediction, bullUser1, bullUser2, bearUser1, oracle } = await loadFixture(deployPredictionFixture);
     // Epoch 1
     await prediction.genesisStartRound();
     let currentEpoch = await prediction.currentEpoch();
@@ -277,19 +284,301 @@ describe("Prediction", function () {
       value: BigNumber.from(ether("1.4")),
     }); // Bear 1.4 ETH
 
-    // assert.equal((await balance.current(prediction.address)).toString(), ether("3.7").toString()); // 3.7 BNB
-    // assert.equal((await prediction.rounds(1)).totalAmount, ether("3.7").toString()); // 3.7 BNB
-    // assert.equal((await prediction.rounds(1)).bullAmount, ether("2.3").toString()); // 2.3 BNB
-    // assert.equal((await prediction.rounds(1)).bearAmount, ether("1.4").toString()); // 1.4 BNB
-    // assert.equal((await prediction.ledger(1, bullUser1)).position, Position.Bull);
-    // assert.equal((await prediction.ledger(1, bullUser1)).amount, ether("1.1").toString());
-    // assert.equal((await prediction.ledger(1, bullUser2)).position, Position.Bull);
-    // assert.equal((await prediction.ledger(1, bullUser2)).amount, ether("1.2").toString());
-    // assert.equal((await prediction.ledger(1, bearUser1)).position, Position.Bear);
-    // assert.equal((await prediction.ledger(1, bearUser1)).amount, ether("1.4").toString());
-    // assertBNArray((await prediction.getUserRounds(bullUser1, 0, 1))[0], [1]);
-    // assertBNArray((await prediction.getUserRounds(bullUser2, 0, 1))[0], [1]);
-    // assertBNArray((await prediction.getUserRounds(bearUser1, 0, 1))[0], [1]);
-    // assert.equal(await prediction.getUserRoundsLength(bullUser1), 1);
+    expect(await ethers.provider.getBalance(prediction.address)).to.equal(ether("3.7"));
+    expect((await prediction.rounds(1)).totalAmount).to.equal(ether("3.7"));
+    expect((await prediction.rounds(1)).bullAmount).to.equal(ether("2.3"));
+    expect((await prediction.rounds(1)).bearAmount).to.equal(ether("1.4"));
+    expect((await prediction.ledger(1, bullUser1.address)).position).to.equal(Position.Bull);
+    expect((await prediction.ledger(1, bullUser1.address)).amount).to.equal(ether("1.1"));
+    expect((await prediction.ledger(1, bullUser2.address)).position).to.equal(Position.Bull);
+    expect((await prediction.ledger(1, bullUser2.address)).amount).to.equal(ether("1.2"));
+    expect((await prediction.ledger(1, bearUser1.address)).position).to.equal(Position.Bear);
+    expect((await prediction.ledger(1, bearUser1.address)).amount).to.equal(ether("1.4"));
+    expectBigNumberArray((await prediction.getUserRounds(bullUser1.address, 0, 1))[0], [1]);
+    expectBigNumberArray((await prediction.getUserRounds(bullUser2.address, 0, 1))[0], [1]);
+    expectBigNumberArray((await prediction.getUserRounds(bearUser1.address, 0, 1))[0], [1]);
+    expect(await prediction.getUserRoundsLength(bullUser1.address)).to.equal(1);
+
+    // Epoch 2
+    await nextEpoch();
+    await prediction.genesisLockRound(); // For round 1
+    currentEpoch = await prediction.currentEpoch();
+
+    await prediction.connect(bullUser1).betBull(currentEpoch, {
+      value: BigNumber.from(ether("2.1")),
+    }); // Bull 2.1 ETH
+    await prediction.connect(bullUser2).betBull(currentEpoch, {
+      value: BigNumber.from(ether("2.2")),
+    }); // Bull 2.2 ETH
+    await prediction.connect(bearUser1).betBear(currentEpoch, {
+      value: BigNumber.from(ether("2.4")),
+    }); // Bear 2.4 ETH
+
+    expect(await ethers.provider.getBalance(prediction.address)).to.equal(ether("10.4"));
+    expect((await prediction.rounds(2)).totalAmount).to.equal(ether("6.7"));
+    expect((await prediction.rounds(2)).bullAmount).to.equal(ether("4.3"));
+    expect((await prediction.rounds(2)).bearAmount).to.equal(ether("2.4"));
+    expect((await prediction.ledger(2, bullUser1.address)).position).to.equal(Position.Bull);
+    expect((await prediction.ledger(2, bullUser1.address)).amount).to.equal(ether("2.1"));
+    expect((await prediction.ledger(2, bullUser2.address)).position).to.equal(Position.Bull);
+    expect((await prediction.ledger(2, bullUser2.address)).amount).to.equal(ether("2.2"));
+    expect((await prediction.ledger(2, bearUser1.address)).position).to.equal(Position.Bear);
+    expect((await prediction.ledger(2, bearUser1.address)).amount).to.equal(ether("2.4"));
+    expectBigNumberArray((await prediction.getUserRounds(bullUser1.address, 0, 2))[0], [1, 2]);
+    expectBigNumberArray((await prediction.getUserRounds(bullUser2.address, 0, 2))[0], [1, 2]);
+    expectBigNumberArray((await prediction.getUserRounds(bearUser1.address, 0, 2))[0], [1, 2]);
+    expect(await prediction.getUserRoundsLength(bullUser1.address)).to.equal(2);
+
+    // Epoch 3
+    await nextEpoch();
+    await oracle.updateAnswer(INITIAL_PRICE); // To update Oracle roundId
+    await prediction.executeRound();
+    currentEpoch = await prediction.currentEpoch();
+
+    await prediction.connect(bullUser1).betBull(currentEpoch, {
+      value: BigNumber.from(ether("3.1")),
+    }); // Bull 3.1 ETH
+    await prediction.connect(bullUser2).betBull(currentEpoch, {
+      value: BigNumber.from(ether("3.2")),
+    }); // Bull 3.2 ETH
+    await prediction.connect(bearUser1).betBear(currentEpoch, {
+      value: BigNumber.from(ether("3.4")),
+    }); // Bear 3.4 ETH
+
+    expect(await ethers.provider.getBalance(prediction.address)).to.equal(ether("20.1"));
+    expect((await prediction.rounds(3)).totalAmount).to.equal(ether("9.7"));
+    expect((await prediction.rounds(3)).bullAmount).to.equal(ether("6.3"));
+    expect((await prediction.rounds(3)).bearAmount).to.equal(ether("3.4"));
+    expect((await prediction.ledger(3, bullUser1.address)).position).to.equal(Position.Bull);
+    expect((await prediction.ledger(3, bullUser1.address)).amount).to.equal(ether("3.1"));
+    expect((await prediction.ledger(3, bullUser2.address)).position).to.equal(Position.Bull);
+    expect((await prediction.ledger(3, bullUser2.address)).amount).to.equal(ether("3.2"));
+    expect((await prediction.ledger(3, bearUser1.address)).position).to.equal(Position.Bear);
+    expect((await prediction.ledger(3, bearUser1.address)).amount).to.equal(ether("3.4"));
+    expectBigNumberArray((await prediction.getUserRounds(bullUser1.address, 0, 3))[0], [1, 2, 3]);
+    expectBigNumberArray((await prediction.getUserRounds(bullUser2.address, 0, 3))[0], [1, 2, 3]);
+    expectBigNumberArray((await prediction.getUserRounds(bearUser1.address, 0, 3))[0], [1, 2, 3]);
+    expect(await prediction.getUserRoundsLength(bullUser1.address)).to.equal(3);
+
+    // Epoch 4
+    await nextEpoch();
+    await oracle.updateAnswer(INITIAL_PRICE); // To update Oracle roundId
+    await prediction.executeRound();
+    currentEpoch = await prediction.currentEpoch();
+
+    await prediction.connect(bullUser1).betBull(currentEpoch, {
+      value: BigNumber.from(ether("4.1")),
+    }); // Bull 4.1 ETH
+    await prediction.connect(bullUser2).betBull(currentEpoch, {
+      value: BigNumber.from(ether("4.2")),
+    }); // Bull 4.2 ETH
+    await prediction.connect(bearUser1).betBear(currentEpoch, {
+      value: BigNumber.from(ether("4.4")),
+    }); // Bear 4.4 ETH
+
+    expect(await ethers.provider.getBalance(prediction.address)).to.equal(ether("32.8"));
+    expect((await prediction.rounds(4)).totalAmount).to.equal(ether("12.7"));
+    expect((await prediction.rounds(4)).bullAmount).to.equal(ether("8.3"));
+    expect((await prediction.rounds(4)).bearAmount).to.equal(ether("4.4"));
+    expect((await prediction.ledger(4, bullUser1.address)).position).to.equal(Position.Bull);
+    expect((await prediction.ledger(4, bullUser1.address)).amount).to.equal(ether("4.1"));
+    expect((await prediction.ledger(4, bullUser2.address)).position).to.equal(Position.Bull);
+    expect((await prediction.ledger(4, bullUser2.address)).amount).to.equal(ether("4.2"));
+    expect((await prediction.ledger(4, bearUser1.address)).position).to.equal(Position.Bear);
+    expect((await prediction.ledger(4, bearUser1.address)).amount).to.equal(ether("4.4"));
+    expectBigNumberArray((await prediction.getUserRounds(bullUser1.address, 0, 4))[0], [1, 2, 3, 4]);
+    expectBigNumberArray((await prediction.getUserRounds(bullUser2.address, 0, 4))[0], [1, 2, 3, 4]);
+    expectBigNumberArray((await prediction.getUserRounds(bearUser1.address, 0, 4))[0], [1, 2, 3, 4]);
+    expect(await prediction.getUserRoundsLength(bullUser1.address)).to.equal(4);
+  });
+
+  it("8.Should not allow multiple bets", async () => {
+    const { prediction, bullUser1, bearUser1 } = await loadFixture(deployPredictionFixture);
+    // Epoch 1
+    await prediction.genesisStartRound();
+    let currentEpoch = await prediction.currentEpoch();
+
+    await prediction.connect(bullUser1).betBull(currentEpoch, { value: BigNumber.from(ether("1")) }); // Success
+    await expect(
+      prediction.connect(bullUser1).betBull(currentEpoch, { value: BigNumber.from(ether("1")) })
+    ).to.be.revertedWith("Can only bet once per round");
+    await expect(
+      prediction.connect(bullUser1).betBear(currentEpoch, { value: BigNumber.from(ether("1")) })
+    ).to.be.revertedWith("Can only bet once per round");
+
+    await prediction.connect(bearUser1).betBear(currentEpoch, { value: BigNumber.from(ether("1")) }); // Success
+    await expect(
+      prediction.connect(bearUser1).betBull(currentEpoch, { value: BigNumber.from(ether("1")) })
+    ).to.be.revertedWith("Can only bet once per round");
+    await expect(
+      prediction.connect(bearUser1).betBear(currentEpoch, { value: BigNumber.from(ether("1")) })
+    ).to.be.revertedWith("Can only bet once per round");
+
+    // Epoch 2
+    await nextEpoch();
+    await prediction.genesisLockRound(); // For round 1
+    currentEpoch = await prediction.currentEpoch();
+
+    await prediction.connect(bullUser1).betBull(currentEpoch, { value: BigNumber.from(ether("1")) }); // Success
+    await expect(
+      prediction.connect(bullUser1).betBull(currentEpoch, { value: BigNumber.from(ether("1")) })
+    ).to.be.revertedWith("Can only bet once per round");
+    await expect(
+      prediction.connect(bullUser1).betBear(currentEpoch, { value: BigNumber.from(ether("1")) })
+    ).to.be.revertedWith("Can only bet once per round");
+
+    await prediction.connect(bearUser1).betBear(currentEpoch, { value: BigNumber.from(ether("1")) }); // Success
+    await expect(
+      prediction.connect(bearUser1).betBull(currentEpoch, { value: BigNumber.from(ether("1")) })
+    ).to.be.revertedWith("Can only bet once per round");
+    await expect(
+      prediction.connect(bearUser1).betBear(currentEpoch, { value: BigNumber.from(ether("1")) })
+    ).to.be.revertedWith("Can only bet once per round");
+  });
+
+  it("9.Should not allow bets lesser than minimum bet amount", async () => {
+    const { prediction, bullUser1, oracle } = await loadFixture(deployPredictionFixture);
+    // Epoch 1
+    await prediction.genesisStartRound();
+    let currentEpoch = await prediction.currentEpoch();
+
+    await expect(
+      prediction.connect(bullUser1).betBull(currentEpoch, { value: BigNumber.from(ether("0.5")) })
+    ).to.be.revertedWith("Bet amount must be greater than minBetAmount");
+    await prediction.connect(bullUser1).betBull(currentEpoch, { value: BigNumber.from(ether("1")) }); // Success
+
+    // Epoch 2
+    await nextEpoch();
+    await prediction.genesisLockRound(); // For round 1
+    currentEpoch = await prediction.currentEpoch();
+
+    await expect(
+      prediction.connect(bullUser1).betBull(currentEpoch, { value: BigNumber.from(ether("0.5")) })
+    ).to.be.revertedWith("Bet amount must be greater than minBetAmount");
+    await prediction.connect(bullUser1).betBull(currentEpoch, { value: BigNumber.from(ether("1")) }); // Success
+
+    // Epoch 3
+    await nextEpoch();
+    await oracle.updateAnswer(INITIAL_PRICE); // To update Oracle roundId
+    await prediction.executeRound();
+    currentEpoch = await prediction.currentEpoch();
+
+    await expect(
+      prediction.connect(bullUser1).betBull(currentEpoch, { value: BigNumber.from(ether("0.5")) })
+    ).to.be.revertedWith("Bet amount must be greater than minBetAmount");
+    await prediction.connect(bullUser1).betBull(currentEpoch, { value: BigNumber.from(ether("1")) }); // Success
+  });
+
+  it("10.Should record rewards", async () => {
+    const { prediction, bullUser1, bullUser2, bearUser1, oracle } = await loadFixture(deployPredictionFixture);
+
+    // Epoch 1
+    const price110 = 11000000000; // $110
+    await oracle.updateAnswer(price110);
+    await prediction.genesisStartRound();
+    let currentEpoch = await prediction.currentEpoch();
+
+    await prediction.connect(bullUser1).betBull(currentEpoch, { value: BigNumber.from(ether("1.1")) }); // 1.1 ETH
+    await prediction.connect(bullUser2).betBull(currentEpoch, { value: BigNumber.from(ether("1.2")) }); // 1.2 ETH
+    await prediction.connect(bearUser1).betBear(currentEpoch, { value: BigNumber.from(ether("1.4")) }); // 1.4 ETH
+
+    expect((await prediction.rounds(1)).rewardBaseCalAmount).to.equal(0);
+    expect((await prediction.rounds(1)).rewardAmount).to.equal(0);
+    expect(await prediction.treasuryAmount()).to.equal(0);
+    expect(await ethers.provider.getBalance(prediction.address)).to.equal(ether("3.7"));
+
+    // Epoch 2
+    await nextEpoch();
+    const price120 = 12000000000; // $120
+    await oracle.updateAnswer(price120);
+    await prediction.genesisLockRound(); // For round 1
+    currentEpoch = await prediction.currentEpoch();
+
+    await prediction.connect(bullUser1).betBull(currentEpoch, { value: BigNumber.from(ether("2.1")) }); // 2.1 ETH
+    await prediction.connect(bullUser2).betBull(currentEpoch, { value: BigNumber.from(ether("2.2")) }); // 2.2 ETH
+    await prediction.connect(bearUser1).betBear(currentEpoch, { value: BigNumber.from(ether("2.4")) }); // 2.4 ETH
+
+    expect((await prediction.rounds(1)).rewardBaseCalAmount).to.equal(0);
+    expect((await prediction.rounds(1)).rewardAmount).to.equal(0);
+    expect((await prediction.rounds(2)).rewardBaseCalAmount).to.equal(0);
+    expect((await prediction.rounds(2)).rewardAmount).to.equal(0);
+    expect(await prediction.treasuryAmount()).to.equal(0);
+    expect(await ethers.provider.getBalance(prediction.address)).to.equal(
+      BigNumber.from(ether("3.7")).add(BigNumber.from(ether("6.7")))
+    );
+
+    // Epoch 3, Round 1 is Bull (130 > 120)
+    await nextEpoch();
+    const price130 = 13000000000; // $130
+    await oracle.updateAnswer(price130);
+    await prediction.executeRound();
+    currentEpoch = await prediction.currentEpoch();
+
+    await prediction.connect(bullUser1).betBull(currentEpoch, { value: BigNumber.from(ether("3.1")) }); // 3.1 ETH
+    await prediction.connect(bullUser2).betBull(currentEpoch, { value: BigNumber.from(ether("3.2")) }); // 3.2 ETH
+    await prediction.connect(bearUser1).betBear(currentEpoch, { value: BigNumber.from(ether("3.4")) }); // 3.4 ETH
+
+    expect((await prediction.rounds(1)).rewardBaseCalAmount).to.equal(BigNumber.from(ether("2.3"))); // 2.3 ETH, Bull total
+    expect((await prediction.rounds(1)).rewardAmount).to.equal(
+      BigNumber.from(ether("3.7")).mul(utils.parseUnits(INITIAL_REWARD_RATE.toString())).div(utils.parseUnits("1"))
+    ); // 3.33 ETH, Total * rewardRate
+    expect((await prediction.rounds(2)).rewardBaseCalAmount).to.equal(0);
+    expect((await prediction.rounds(2)).rewardAmount).to.equal(0);
+    expect(await prediction.treasuryAmount()).to.equal(
+      BigNumber.from(ether("3.7")).mul(utils.parseUnits(INITIAL_TREASURY_RATE.toString())).div(utils.parseUnits("1"))
+    ); // 3.7 ETH, Total * treasuryRate
+    expect(await ethers.provider.getBalance(prediction.address)).to.equal(
+      BigNumber.from(ether("3.7"))
+        .add(BigNumber.from(ether("6.7")))
+        .add(BigNumber.from(ether("9.7")))
+    );
+
+    // Epoch 4, Round 2 is Bear (100 < 130)
+    await nextEpoch();
+    const price100 = 10000000000; // $100
+    await oracle.updateAnswer(price100);
+    await prediction.executeRound();
+    currentEpoch = await prediction.currentEpoch();
+
+    await prediction.connect(bullUser1).betBull(currentEpoch, { value: BigNumber.from(ether("4.1")) }); // 4.1 ETH
+    await prediction.connect(bullUser2).betBull(currentEpoch, { value: BigNumber.from(ether("4.2")) }); // 4.2 ETH
+    await prediction.connect(bearUser1).betBear(currentEpoch, { value: BigNumber.from(ether("4.4")) }); // 4.4 ETH
+
+    expect((await prediction.rounds(1)).rewardBaseCalAmount).to.equal(BigNumber.from(ether("2.3"))); // 2.3 ETH, Bull total
+    expect((await prediction.rounds(1)).rewardAmount).to.equal(
+      BigNumber.from(ether("3.7")).mul(utils.parseUnits(INITIAL_REWARD_RATE.toString())).div(utils.parseUnits("1"))
+    ); // 3.33 ETH, Total * rewardRate
+    expect((await prediction.rounds(2)).rewardBaseCalAmount).to.equal(BigNumber.from(ether("2.4"))); // 2.4 ETH, Bear total
+    expect((await prediction.rounds(2)).rewardAmount).to.equal(
+      BigNumber.from(ether("6.7")).mul(utils.parseUnits(INITIAL_REWARD_RATE.toString())).div(utils.parseUnits("1"))
+    ); // 6.7 ETH, Total * rewardRate
+    expect(await prediction.treasuryAmount()).to.equal(
+      BigNumber.from(ether("3.7"))
+        .add(BigNumber.from(ether("6.7")))
+        .mul(utils.parseUnits(INITIAL_TREASURY_RATE.toString()))
+        .div(utils.parseUnits("1"))
+    ); // 10.4 ETH, Accumulative treasury
+    expect(await ethers.provider.getBalance(prediction.address)).to.equal(
+      BigNumber.from(ether("3.7"))
+        .add(BigNumber.from(ether("6.7")))
+        .add(BigNumber.from(ether("9.7")))
+        .add(BigNumber.from(ether("12.7")))
+    );
+  });
+
+  it("11.Should not lock round before lockTimestamp", async () => {
+    const { prediction, oracle } = await loadFixture(deployPredictionFixture);
+
+    await prediction.genesisStartRound();
+    await nextEpoch();
+    await prediction.genesisLockRound();
+    await nextEpoch();
+    await oracle.updateAnswer(INITIAL_PRICE); // To update Oracle roundId
+    await prediction.executeRound();
+
+    await oracle.updateAnswer(INITIAL_PRICE); // To update Oracle roundId
+    await expect(prediction.executeRound()).to.be.revertedWith("Can only lock round after lockTimestamp");
+    await nextEpoch();
+    await prediction.executeRound(); // Success
   });
 });

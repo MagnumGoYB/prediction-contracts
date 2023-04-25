@@ -76,10 +76,7 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
   );
 
   modifier onlyAdminOrOperator() {
-    require(
-      msg.sender == adminAddress || msg.sender == operatorAddress,
-      "Not operator/admin"
-    );
+    require(msg.sender == adminAddress || msg.sender == operatorAddress, "Not operator/admin");
     _;
   }
 
@@ -131,19 +128,11 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
    * @notice Bet bear position
    * @param epoch: epoch
    */
-  function betBear(
-    uint256 epoch
-  ) external payable whenNotPaused nonReentrant notContract {
+  function betBear(uint256 epoch) external payable whenNotPaused nonReentrant notContract {
     require(epoch == currentEpoch, "Bet is too early/late");
     require(_bettable(epoch), "Round not bettable");
-    require(
-      msg.value >= minBetAmount,
-      "Bet amount must be greater than minBetAmount"
-    );
-    require(
-      ledger[epoch][msg.sender].amount == 0,
-      "Can only bet once per round"
-    );
+    require(msg.value >= minBetAmount, "Bet amount must be greater than minBetAmount");
+    require(ledger[epoch][msg.sender].amount == 0, "Can only bet once per round");
 
     // Update round data
     uint256 amount = msg.value;
@@ -164,19 +153,11 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
    * @notice Bet bull position
    * @param epoch: epoch
    */
-  function betBull(
-    uint256 epoch
-  ) external payable whenNotPaused nonReentrant notContract {
+  function betBull(uint256 epoch) external payable whenNotPaused nonReentrant notContract {
     require(epoch == currentEpoch, "Bet is too early/late");
     require(_bettable(epoch), "Round not bettable");
-    require(
-      msg.value >= minBetAmount,
-      "Bet amount must be greater than minBetAmount"
-    );
-    require(
-      ledger[epoch][msg.sender].amount == 0,
-      "Can only bet once per round"
-    );
+    require(msg.value >= minBetAmount, "Bet amount must be greater than minBetAmount");
+    require(ledger[epoch][msg.sender].amount == 0, "Can only bet once per round");
 
     // Update round data
     uint256 amount = msg.value;
@@ -222,10 +203,7 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
    * @dev Callable by operator
    */
   function genesisLockRound() external whenNotPaused onlyOperator {
-    require(
-      genesisStartOnce,
-      "Can only run after genesisStartRound is triggered"
-    );
+    require(genesisStartOnce, "Can only run after genesisStartRound is triggered");
     require(!genesisLockOnce, "Can only run genesisLockRound once");
 
     (uint80 currentRoundId, int256 currentPrice) = _getPriceFromOracle();
@@ -252,22 +230,39 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
   }
 
   /**
-   * @notice Get latest recorded price from oracle
-   * If it falls below allowed buffer or has not updated, it would be invalid.
+   * @notice Returns round epochs and bet information for a user that has participated
+   * @param user: user address
+   * @param cursor: cursor
+   * @param size: size
    */
-  function _getPriceFromOracle() internal view returns (uint80, int256) {
-    uint256 leastAllowedTimestamp = block.timestamp + oracleUpdateAllowance;
-    (uint80 roundId, int256 price, , uint256 timestamp, ) = oracle
-      .latestRoundData();
-    require(
-      timestamp <= leastAllowedTimestamp,
-      "Oracle update exceeded max timestamp allowance"
-    );
-    require(
-      uint256(roundId) > oracleLatestRoundId,
-      "Oracle update roundId must be larger than oracleLatestRoundId"
-    );
-    return (roundId, price);
+  function getUserRounds(
+    address user,
+    uint256 cursor,
+    uint256 size
+  ) external view returns (uint256[] memory, BetInfo[] memory, uint256) {
+    uint256 length = size;
+
+    if (length > userRounds[user].length - cursor) {
+      length = userRounds[user].length - cursor;
+    }
+
+    uint256[] memory values = new uint256[](length);
+    BetInfo[] memory betInfo = new BetInfo[](length);
+
+    for (uint256 i = 0; i < length; i++) {
+      values[i] = userRounds[user][cursor + i];
+      betInfo[i] = ledger[values[i]][user];
+    }
+
+    return (values, betInfo, cursor + length);
+  }
+
+  /**
+   * @notice Returns round epochs length
+   * @param user: user address
+   */
+  function getUserRoundsLength(address user) external view returns (uint256) {
+    return userRounds[user].length;
   }
 
   /**
@@ -278,6 +273,18 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
     _pause();
 
     emit Pause(currentEpoch);
+  }
+
+  /**
+   * @notice Get latest recorded price from oracle
+   * If it falls below allowed buffer or has not updated, it would be invalid.
+   */
+  function _getPriceFromOracle() internal view returns (uint80, int256) {
+    uint256 leastAllowedTimestamp = block.timestamp + oracleUpdateAllowance;
+    (uint80 roundId, int256 price, , uint256 timestamp, ) = oracle.latestRoundData();
+    require(timestamp <= leastAllowedTimestamp, "Oracle update exceeded max timestamp allowance");
+    require(uint256(roundId) > oracleLatestRoundId, "Oracle update roundId must be larger than oracleLatestRoundId");
+    return (roundId, price);
   }
 
   /**
@@ -301,10 +308,7 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
    * @param epoch: epoch
    */
   function _calculateRewards(uint256 epoch) internal {
-    require(
-      rounds[epoch].rewardBaseCalAmount == 0 && rounds[epoch].rewardAmount == 0,
-      "Rewards calculated"
-    );
+    require(rounds[epoch].rewardBaseCalAmount == 0 && rounds[epoch].rewardAmount == 0, "Rewards calculated");
     Round storage round = rounds[epoch];
     uint256 rewardBaseCalAmount;
     uint256 treasuryAmt;
@@ -334,12 +338,7 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
     // Add to treasury
     treasuryAmount += treasuryAmt;
 
-    emit RewardsCalculated(
-      epoch,
-      rewardBaseCalAmount,
-      rewardAmount,
-      treasuryAmt
-    );
+    emit RewardsCalculated(epoch, rewardBaseCalAmount, rewardAmount, treasuryAmt);
   }
 
   /**
@@ -348,23 +347,10 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
    * @param roundId: roundId
    * @param price: price of the round
    */
-  function _safeEndRound(
-    uint256 epoch,
-    uint256 roundId,
-    int256 price
-  ) internal {
-    require(
-      rounds[epoch].lockTimestamp != 0,
-      "Can only end round after round has locked"
-    );
-    require(
-      block.timestamp >= rounds[epoch].closeTimestamp,
-      "Can only end round after closeTimestamp"
-    );
-    require(
-      block.timestamp <= rounds[epoch].closeTimestamp + bufferSeconds,
-      "Can only end round within bufferSeconds"
-    );
+  function _safeEndRound(uint256 epoch, uint256 roundId, int256 price) internal {
+    require(rounds[epoch].lockTimestamp != 0, "Can only end round after round has locked");
+    require(block.timestamp >= rounds[epoch].closeTimestamp, "Can only end round after closeTimestamp");
+    require(block.timestamp <= rounds[epoch].closeTimestamp + bufferSeconds, "Can only end round within bufferSeconds");
     Round storage round = rounds[epoch];
     round.closePrice = price;
     round.closeOracleId = roundId;
@@ -379,23 +365,10 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
    * @param roundId: roundId
    * @param price: price of the round
    */
-  function _safeLockRound(
-    uint256 epoch,
-    uint256 roundId,
-    int256 price
-  ) internal {
-    require(
-      rounds[epoch].startTimestamp != 0,
-      "Can only lock round after round has started"
-    );
-    require(
-      block.timestamp >= rounds[epoch].lockTimestamp,
-      "Can only lock round after lockTimestamp"
-    );
-    require(
-      block.timestamp <= rounds[epoch].lockTimestamp + bufferSeconds,
-      "Can only lock round within bufferSeconds"
-    );
+  function _safeLockRound(uint256 epoch, uint256 roundId, int256 price) internal {
+    require(rounds[epoch].startTimestamp != 0, "Can only lock round after round has started");
+    require(block.timestamp >= rounds[epoch].lockTimestamp, "Can only lock round after lockTimestamp");
+    require(block.timestamp <= rounds[epoch].lockTimestamp + bufferSeconds, "Can only lock round within bufferSeconds");
     Round storage round = rounds[epoch];
     round.closeTimestamp = block.timestamp + intervalSeconds;
     round.lockPrice = price;
@@ -410,14 +383,8 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
    * @param epoch: epoch
    */
   function _safeStartRound(uint256 epoch) internal {
-    require(
-      genesisStartOnce,
-      "Can only run after genesisStartRound is triggered"
-    );
-    require(
-      rounds[epoch - 2].closeTimestamp != 0,
-      "Can only start round after round n-2 has ended"
-    );
+    require(genesisStartOnce, "Can only run after genesisStartRound is triggered");
+    require(rounds[epoch - 2].closeTimestamp != 0, "Can only start round after round n-2 has ended");
     require(
       block.timestamp >= rounds[epoch - 2].closeTimestamp,
       "Can only start new round after round n-2 closeTimestamp"
