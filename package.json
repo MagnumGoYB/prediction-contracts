@@ -8,7 +8,8 @@
     "pretty": "pretty-quick && prettier-package-json --write",
     "test": "hardhat test",
     "test:coverage": "hardhat coverage",
-    "test:gas": "cross-env REPORT_GAS=true hardhat test"
+    "test:gas": "cross-env REPORT_GAS=true hardhat test",
+    "test:watch": "hardhat watch test"
   },
   "devDependencies": {
     "@chainlink/contracts": "^0.6.1",
@@ -20,6 +21,7 @@
     "cross-env": "^7.0.3",
     "dotenv": "^16.0.3",
     "hardhat": "^2.14.0",
+    "hardhat-watcher": "^2.5.0",
     "husky": "^8.0.2",
     "lint-staged": "^13.1.0",
     "prettier": "^2.8.7",

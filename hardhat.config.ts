@@ -1,6 +1,7 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
 import "@nomiclabs/hardhat-web3";
+import "hardhat-watcher";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -29,6 +30,14 @@ const config: HardhatUserConfig = {
     tests: "./test",
     cache: "./cache",
     artifacts: "./artifacts",
+  },
+  watcher: {
+    test: {
+      tasks: ["test"],
+      files: ["./test/**/*", "./contracts/**/*"],
+      verbose: true,
+      clearOnStart: true,
+    },
   },
 };
 

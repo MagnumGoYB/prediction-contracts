@@ -64,7 +64,9 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
 
   event BetBear(address indexed sender, uint256 indexed epoch, uint256 amount);
   event BetBull(address indexed sender, uint256 indexed epoch, uint256 amount);
+  event Claim(address indexed sender, uint256 indexed epoch, uint256 amount);
   event Pause(uint256 indexed epoch);
+  event Unpause(uint256 indexed epoch);
   event StartRound(uint256 indexed epoch);
   event EndRound(uint256 indexed epoch, uint256 indexed roundId, int256 price);
   event LockRound(uint256 indexed epoch, uint256 indexed roundId, int256 price);
@@ -74,6 +76,20 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
     uint256 rewardAmount,
     uint256 treasuryAmount
   );
+  event NewBufferAndIntervalSeconds(uint256 bufferSeconds, uint256 intervalSeconds);
+  event NewMinBetAmount(uint256 indexed epoch, uint256 minBetAmount);
+  event NewOperatorAddress(address operator);
+  event NewOracle(address oracle);
+  event NewOracleUpdateAllowance(uint256 oracleUpdateAllowance);
+  event NewTreasuryFee(uint256 indexed epoch, uint256 treasuryFee);
+  event NewAdminAddress(address admin);
+  event TokenRecovery(address indexed token, uint256 amount);
+  event TreasuryClaim(uint256 amount);
+
+  modifier onlyAdmin() {
+    require(msg.sender == adminAddress, "Not admin");
+    _;
+  }
 
   modifier onlyAdminOrOperator() {
     require(msg.sender == adminAddress || msg.sender == operatorAddress, "Not operator/admin");
@@ -175,6 +191,42 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
   }
 
   /**
+   * @notice Claim reward for an array of epochs
+   * @param epochs: array of epochs
+   */
+  function claim(uint256[] calldata epochs) external nonReentrant notContract {
+    uint256 reward; // Initializes reward
+
+    for (uint256 i = 0; i < epochs.length; i++) {
+      require(rounds[epochs[i]].startTimestamp != 0, "Round has not started");
+      require(block.timestamp > rounds[epochs[i]].closeTimestamp, "Round has not ended");
+
+      uint256 addedReward = 0;
+
+      // Round valid, claim rewards
+      if (rounds[epochs[i]].oracleCalled) {
+        require(claimable(epochs[i], msg.sender), "Not eligible for claim");
+        Round memory round = rounds[epochs[i]];
+        addedReward = (ledger[epochs[i]][msg.sender].amount * round.rewardAmount) / round.rewardBaseCalAmount;
+      }
+      // Round invalid, refund bet amount
+      else {
+        require(refundable(epochs[i], msg.sender), "Not eligible for refund");
+        addedReward = ledger[epochs[i]][msg.sender].amount;
+      }
+
+      ledger[epochs[i]][msg.sender].claimed = true;
+      reward += addedReward;
+
+      emit Claim(msg.sender, epochs[i], addedReward);
+    }
+
+    if (reward > 0) {
+      _safeTransferETH(address(msg.sender), reward);
+    }
+  }
+
+  /**
    * @notice Start the next round n, lock price for round n-1, end round n-2
    * @dev Callable by operator
    */
@@ -266,6 +318,40 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
   }
 
   /**
+   * @notice Get the claimable stats of specific epoch and user account
+   * @param epoch: epoch
+   * @param user: user address
+   */
+  function claimable(uint256 epoch, address user) public view returns (bool) {
+    BetInfo memory betInfo = ledger[epoch][user];
+    Round memory round = rounds[epoch];
+    if (round.lockPrice == round.closePrice) {
+      return false;
+    }
+    return
+      round.oracleCalled &&
+      betInfo.amount != 0 &&
+      !betInfo.claimed &&
+      ((round.closePrice > round.lockPrice && betInfo.position == Position.Bull) ||
+        (round.closePrice < round.lockPrice && betInfo.position == Position.Bear));
+  }
+
+  /**
+   * @notice Get the refundable stats of specific epoch and user account
+   * @param epoch: epoch
+   * @param user: user address
+   */
+  function refundable(uint256 epoch, address user) public view returns (bool) {
+    BetInfo memory betInfo = ledger[epoch][user];
+    Round memory round = rounds[epoch];
+    return
+      !round.oracleCalled &&
+      !betInfo.claimed &&
+      block.timestamp > round.closeTimestamp + bufferSeconds &&
+      betInfo.amount != 0;
+  }
+
+  /**
    * @notice called by the admin to pause, triggers stopped state
    * @dev Callable by admin or operator
    */
@@ -273,6 +359,123 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
     _pause();
 
     emit Pause(currentEpoch);
+  }
+
+  /**
+   * @notice called by the admin to unpause, returns to normal state
+   * Reset genesis state. Once paused, the rounds would need to be kickstarted by genesis
+   */
+  function unpause() external whenPaused onlyAdmin {
+    genesisStartOnce = false;
+    genesisLockOnce = false;
+    _unpause();
+
+    emit Unpause(currentEpoch);
+  }
+
+  /**
+   * @notice Set buffer and interval (in seconds)
+   * @dev Callable by admin
+   */
+  function setBufferAndIntervalSeconds(uint256 _bufferSeconds, uint256 _intervalSeconds) external whenPaused onlyAdmin {
+    require(_bufferSeconds < _intervalSeconds, "bufferSeconds must be inferior to intervalSeconds");
+    bufferSeconds = _bufferSeconds;
+    intervalSeconds = _intervalSeconds;
+
+    emit NewBufferAndIntervalSeconds(_bufferSeconds, _intervalSeconds);
+  }
+
+  /**
+   * @notice Set minBetAmount
+   * @dev Callable by admin
+   */
+  function setMinBetAmount(uint256 _minBetAmount) external whenPaused onlyAdmin {
+    require(_minBetAmount != 0, "Must be superior to 0");
+    minBetAmount = _minBetAmount;
+
+    emit NewMinBetAmount(currentEpoch, minBetAmount);
+  }
+
+  /**
+   * @notice Set operator address
+   * @dev Callable by admin
+   */
+  function setOperator(address _operatorAddress) external onlyAdmin {
+    require(_operatorAddress != address(0), "Cannot be zero address");
+    operatorAddress = _operatorAddress;
+
+    emit NewOperatorAddress(_operatorAddress);
+  }
+
+  /**
+   * @notice Set Oracle address
+   * @dev Callable by admin
+   */
+  function setOracle(address _oracle) external whenPaused onlyAdmin {
+    require(_oracle != address(0), "Cannot be zero address");
+    oracleLatestRoundId = 0;
+    oracle = AggregatorV3Interface(_oracle);
+
+    // Dummy check to make sure the interface implements this function properly
+    oracle.latestRoundData();
+
+    emit NewOracle(_oracle);
+  }
+
+  /**
+   * @notice Set oracle update allowance
+   * @dev Callable by admin
+   */
+  function setOracleUpdateAllowance(uint256 _oracleUpdateAllowance) external whenPaused onlyAdmin {
+    oracleUpdateAllowance = _oracleUpdateAllowance;
+
+    emit NewOracleUpdateAllowance(_oracleUpdateAllowance);
+  }
+
+  /**
+   * @notice Set treasury fee
+   * @dev Callable by admin
+   */
+  function setTreasuryFee(uint256 _treasuryFee) external whenPaused onlyAdmin {
+    require(_treasuryFee <= MAX_TREASURY_FEE, "Treasury fee too high");
+    treasuryFee = _treasuryFee;
+
+    emit NewTreasuryFee(currentEpoch, treasuryFee);
+  }
+
+  /**
+   * @notice Set admin address
+   * @dev Callable by owner
+   */
+  function setAdmin(address _adminAddress) external onlyOwner {
+    require(_adminAddress != address(0), "Cannot be zero address");
+    adminAddress = _adminAddress;
+
+    emit NewAdminAddress(_adminAddress);
+  }
+
+  /**
+   * @notice Claim all rewards in treasury
+   * @dev Callable by admin
+   */
+  function claimTreasury() external nonReentrant onlyAdmin {
+    uint256 currentTreasuryAmount = treasuryAmount;
+    treasuryAmount = 0;
+    _safeTransferETH(adminAddress, currentTreasuryAmount);
+
+    emit TreasuryClaim(currentTreasuryAmount);
+  }
+
+  /**
+   * @notice It allows the owner to recover tokens sent to the contract by mistake
+   * @param _token: token address
+   * @param _amount: token amount
+   * @dev Callable by owner
+   */
+  function recoverToken(address _token, uint256 _amount) external onlyOwner {
+    IERC20(_token).safeTransfer(address(msg.sender), _amount);
+
+    emit TokenRecovery(_token, _amount);
   }
 
   /**
@@ -390,6 +593,16 @@ contract Prediction is Ownable, Pausable, ReentrancyGuard {
       "Can only start new round after round n-2 closeTimestamp"
     );
     _startRound(epoch);
+  }
+
+  /**
+   * @notice Transfer ETH in a safe way
+   * @param to: address to transfer ETH to
+   * @param value: ETH amount to transfer (in wei)
+   */
+  function _safeTransferETH(address to, uint256 value) internal {
+    (bool success, ) = to.call{value: value}("");
+    require(success, "TransferHelper: ETH_TRANSFER_FAILED");
   }
 
   /**
