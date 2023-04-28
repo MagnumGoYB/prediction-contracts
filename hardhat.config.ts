@@ -2,12 +2,14 @@ import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
 import "@nomiclabs/hardhat-web3";
 import "hardhat-watcher";
+import "hardhat-gas-reporter";
 import dotenv from "dotenv";
 
 dotenv.config();
 
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY as string;
 const GOERLI_PRIVATE_KEY = process.env.GOERLI_PRIVATE_KEY as string;
+const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY as string;
 
 const config: HardhatUserConfig = {
   defaultNetwork: "hardhat",
@@ -18,6 +20,9 @@ const config: HardhatUserConfig = {
         enabled: true,
       },
     },
+  },
+  etherscan: {
+    apiKey: ETHERSCAN_API_KEY,
   },
   networks: {
     testnet: {
@@ -38,6 +43,9 @@ const config: HardhatUserConfig = {
       verbose: true,
       clearOnStart: true,
     },
+  },
+  gasReporter: {
+    enabled: true,
   },
 };
 

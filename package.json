@@ -21,6 +21,7 @@
     "cross-env": "^7.0.3",
     "dotenv": "^16.0.3",
     "hardhat": "^2.14.0",
+    "hardhat-gas-reporter": "^1.0.9",
     "hardhat-watcher": "^2.5.0",
     "husky": "^8.0.2",
     "lint-staged": "^13.1.0",

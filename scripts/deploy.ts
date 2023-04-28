@@ -1,24 +1,52 @@
-import { ethers } from "hardhat";
+import { parseEther } from "ethers/lib/utils";
+import { ethers, network, run } from "hardhat";
+import config from "../config";
 
-async function main() {
-  const currentTimestampInSeconds = Math.round(Date.now() / 1000);
-  const unlockTime = currentTimestampInSeconds + 60;
+const main = async () => {
+  // Get network data from Hardhat config (see hardhat.config.ts).
+  const networkName = network.name;
 
-  const lockedAmount = ethers.utils.parseEther("0.001");
+  // Check if the network is supported.
+  if (networkName === "testnet" || networkName === "mainnet") {
+    console.log(`Deploying to ${networkName} network...`);
 
-  const Lock = await ethers.getContractFactory("Lock");
-  const lock = await Lock.deploy(unlockTime, { value: lockedAmount });
+    // Check if the addresses in the config are set.
+    if (
+      config.Address.Oracle[networkName] === ethers.constants.AddressZero ||
+      config.Address.Admin[networkName] === ethers.constants.AddressZero ||
+      config.Address.Operator[networkName] === ethers.constants.AddressZero
+    ) {
+      throw new Error("Missing addresses (Chainlink Oracle and/or Admin/Operator)");
+    }
 
-  await lock.deployed();
+    // Compile contracts.
+    await run("compile");
+    console.log("Compiled contracts...");
 
-  console.log(
-    `Lock with ${ethers.utils.formatEther(lockedAmount)}ETH and unlock timestamp ${unlockTime} deployed to ${lock.address}`
-  );
-}
+    // Deploy contracts.
+    const Prediction = await ethers.getContractFactory("Prediction");
+    const contract = await Prediction.deploy(
+      config.Address.Oracle[networkName],
+      config.Address.Admin[networkName],
+      config.Address.Operator[networkName],
+      config.Block.Interval[networkName],
+      config.Block.Buffer[networkName],
+      parseEther(config.BetAmount[networkName].toString()).toString(),
+      config.OracleUpdateAllowance[networkName],
+      config.Treasury[networkName]
+    );
 
-// We recommend this pattern to be able to use async/await everywhere
-// and properly handle errors.
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+    // Wait for the contract to be deployed before exiting the script.
+    await contract.deployed();
+    console.log(`Deployed to ${contract.address}`);
+  } else {
+    console.log(`Deploying to ${networkName} network is not supported...`);
+  }
+};
+
+main()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });

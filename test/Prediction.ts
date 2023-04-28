@@ -12,7 +12,6 @@ const expectBigNumberArray = (arr1: any[], arr2: any | any[]) => {
   });
 };
 
-const GAS_PRICE = 8000000000; // hardhat default
 const BLOCK_COUNT_MULTPLIER = 5;
 const DECIMALS = 8; // Chainlink default for ETH / USD
 const INITIAL_PRICE = 10000000000; // $100, 8 decimal places
